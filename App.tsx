@@ -178,34 +178,27 @@ const SettingsPanel: React.FC<{
                 </label>
               </h4>
               <div className="space-y-3">
-                {/* Upload MP3 */}
+                {/* External Music URL */}
                 <div>
-                  <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">上傳 MP3 音樂</label>
-                  <label className="flex items-center gap-2 px-3 py-2 bg-white border border-purple-200 rounded-lg text-sm font-bold text-purple-700 cursor-pointer hover:bg-purple-50 transition shadow-sm w-full justify-center">
-                    <Upload size={16} />
-                    {config.bgMusic ? "已選擇音樂 (點擊更換)" : "選擇音樂檔案"}
-                    <input
-                      type="file"
-                      className="hidden"
-                      accept="audio/mp3,audio/wav"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          if (file.size > 800 * 1024) {
-                            alert(`音樂檔案太大 (${(file.size / 1024).toFixed(0)}KB)。建議小於 800KB 以避免超過 Firestore 儲存限制。`);
-                            return;
-                          }
-                          const reader = new FileReader();
-                          reader.onload = (ev) => {
-                            if (ev.target?.result) {
-                              setConfig({ ...config, bgMusic: ev.target.result as string });
-                            }
-                          };
-                          reader.readAsDataURL(file);
-                        }
-                      }}
-                    />
-                  </label>
+                  <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">音樂 URL (外部連結)</label>
+                  <input
+                    type="url"
+                    placeholder="https://example.com/music.mp3"
+                    value={config.bgMusic && !config.bgMusic.startsWith('blob:') ? config.bgMusic : ''}
+                    onChange={(e) => setConfig({ ...config, bgMusic: e.target.value })}
+                    className="w-full border border-purple-200 rounded-lg px-3 py-2 font-bold text-gray-700 text-sm focus:ring-2 focus:ring-purple-400 focus:outline-none"
+                  />
+                  <p className="text-[9px] text-gray-400 mt-1">
+                    貼上 MP3 外部連結（Google Drive 直連、Dropbox 等）。避免使用本機檔案。
+                  </p>
+                  {config.bgMusic && (
+                    <button
+                      onClick={() => setConfig({ ...config, bgMusic: '' })}
+                      className="text-[10px] text-red-500 font-bold mt-1 hover:underline"
+                    >
+                      ✕ 清除音樂
+                    </button>
+                  )}
                 </div>
 
                 {/* Loop Range */}
@@ -650,9 +643,16 @@ const App: React.FC = () => { // --- State ---
   const handleSaveToCloud = async () => {
     if (!confirm("確定要發布當前牌組到雲端嗎？這將覆蓋現有的雲端資料。")) return;
 
+    // Sanitize blob: URLs — they only work locally and break for other users
+    const cleanConfig = {
+      ...config,
+      bgMusic: config.bgMusic?.startsWith('blob:') ? '' : config.bgMusic,
+      coverImage: config.coverImage?.startsWith('blob:') ? '' : config.coverImage,
+    };
+
     setIsSyncing(true);
     try {
-      await GameService.saveGameToCloud(config, deck);
+      await GameService.saveGameToCloud(cleanConfig, deck);
       alert("發布成功！玩家現在可以看到新的牌組了。");
       setShareUrl(window.location.origin + window.location.pathname);
     } catch (e) {
