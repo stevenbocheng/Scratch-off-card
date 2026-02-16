@@ -233,36 +233,12 @@ const SettingsPanel: React.FC<{
             <div className="bg-orange-50 p-4 rounded-xl border border-orange-100">
               <h4 className="font-bold text-orange-800 mb-2 flex items-center gap-2 justify-between">
                 <div className="flex items-center gap-2"><Trophy size={18} /> 獎金分配 (Prize Rules)</div>
-                <div className="flex flex-col gap-2">
-                  <button
-                    onClick={onRegenerate}
-                    className="w-full py-3 bg-gray-100 text-gray-700 rounded-xl font-bold hover:bg-gray-200 transaction flex items-center justify-center gap-2"
-                  >
-                    <RotateCcw size={18} />
-                    重新產生牌組 (Local Preview)
-                  </button>
-
-                  {onSave && (
-                    <button
-                      onClick={onSave}
-                      disabled={isSyncing}
-                      className="w-full py-4 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl font-bold shadow-lg hover:shadow-xl transform active:scale-95 transition flex items-center justify-center gap-2 disabled:opacity-50"
-                    >
-                      {isSyncing ? <RotateCcw className="animate-spin" size={20} /> : <Cloud size={20} />}
-                      {isSyncing ? "發布中..." : "儲存並發布到雲端 (Save & Deploy)"}
-                    </button>
-                  )}
-
-                  {onShare && (
-                    <button
-                      onClick={onShare}
-                      className="w-full py-3 bg-green-50 text-green-700 border border-green-200 rounded-xl font-bold hover:bg-green-100 transition flex items-center justify-center gap-2"
-                    >
-                      <LinkIcon size={18} />
-                      複製玩家專用連結
-                    </button>
-                  )}
-                </div>
+                <button
+                  onClick={addTier}
+                  className="text-xs bg-orange-100 text-orange-600 px-2 py-1 rounded-md hover:bg-orange-200 flex items-center gap-1 font-bold"
+                >
+                  <Plus size={12} /> 新增獎項
+                </button>
               </h4>
               <p className="text-xs text-orange-600/70 mb-3">總共 {config.totalCards} 張卡片，請設定中獎張數與金額。未分配的張數將自動視為 $0。</p>
 
@@ -306,6 +282,41 @@ const SettingsPanel: React.FC<{
                   </div>
                 )}
               </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex flex-col gap-3 pt-4 border-t border-gray-100 mt-6">
+              <h4 className="font-bold text-gray-800 flex items-center gap-2">
+                <Settings size={18} className="text-gray-400" /> 管理與操作 (Actions)
+              </h4>
+              <button
+                onClick={() => { onRegenerate(); onClose(); }}
+                className="w-full py-3 bg-gray-100 text-gray-700 rounded-xl font-bold hover:bg-gray-200 transaction flex items-center justify-center gap-2"
+              >
+                <RotateCcw size={18} />
+                重新產生牌組 (Local Preview)
+              </button>
+
+              {onSave && (
+                <button
+                  onClick={onSave}
+                  disabled={isSyncing}
+                  className="w-full py-4 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl font-bold shadow-lg hover:shadow-xl transform active:scale-95 transition flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isSyncing ? <RotateCcw className="animate-spin" size={20} /> : <Cloud size={20} />}
+                  {isSyncing ? "發布中..." : "儲存並發布到雲端 (Save & Deploy)"}
+                </button>
+              )}
+
+              {onShare && (
+                <button
+                  onClick={onShare}
+                  className="w-full py-3 bg-green-50 text-green-700 border border-green-200 rounded-xl font-bold hover:bg-green-100 transition flex items-center justify-center gap-2"
+                >
+                  <LinkIcon size={18} />
+                  複製玩家專用連結
+                </button>
+              )}
             </div>
 
           </motion.div>
@@ -539,7 +550,7 @@ const App: React.FC = () => { // --- State ---
         setDeck(data.deck);
         // Update played IDs based on deck content
         const played = data.deck.filter(c => c.isPlayed).map(c => c.id);
-        setPlayedIds(played);
+        setPlayedIds(new Set(played));
         setLockedCards(new Set(data.lockedCards || [])); // Initialize lockedCards
       } else {
         // No game in cloud, use default or local
