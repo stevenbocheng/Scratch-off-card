@@ -7,7 +7,9 @@ import {
     updateDoc,
     serverTimestamp,
     Timestamp,
-    runTransaction
+    runTransaction,
+    addDoc,
+    collection
 } from "firebase/firestore";
 import { GameConfig, CardData } from "../types";
 
@@ -43,6 +45,29 @@ export const GameService = {
 
         await setDoc(gameRef, data);
         return true;
+    },
+
+    /**
+     * Save a snapshot of the game to a unique document in the 'cards' collection.
+     * Returns the generated Document ID for sharing.
+     */
+    async saveCard(config: GameConfig, deck: CardData[]): Promise<string> {
+        const colRef = collection(db, "cards");
+        const docRef = await addDoc(colRef, {
+            config,
+            deck,
+            createdAt: serverTimestamp()
+        });
+        return docRef.id;
+    },
+
+    /**
+     * Retrieve a saved card snapshot by its Document ID.
+     */
+    async getCard(id: string): Promise<GameState | null> {
+        const docRef = doc(db, "cards", id);
+        const snap = await getDoc(docRef);
+        return snap.exists() ? (snap.data() as GameState) : null;
     },
 
     // --- Player Functions ---
