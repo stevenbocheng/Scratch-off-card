@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings, X, Cat, Trophy, RotateCcw, Upload, Image as ImageIcon, Plus, Trash2, Percent, Coins, MessageSquare, Cloud, Link as LinkIcon } from 'lucide-react';
+import { Settings, X, Cat, Trophy, RotateCcw, Upload, Image as ImageIcon, Plus, Trash2, Percent, Coins, MessageSquare, Cloud, Link as LinkIcon, Volume2, VolumeX } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ScratchCanvas from './components/ScratchCanvas';
 import ResultModal from './components/ResultModal';
@@ -554,20 +554,24 @@ const ScratchCardGame: React.FC<{
 const App: React.FC = () => { // --- State ---
   const [config, setConfig] = useState<GameConfig>(DEFAULT_CONFIG);
   const [deck, setDeck] = useState<GameResult[]>([]);
-  const [playedIds, setPlayedIds] = useState<Set<number>>(new Set()); // Changed to Set for better performance
+  const [playedIds, setPlayedIds] = useState<Set<number>>(new Set());
   const [selectedCardId, setSelectedCardId] = useState<number | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [showModal, setShowModal] = useState(false); // Result modal
+  const [showModal, setShowModal] = useState(false);
   const [winMessage, setWinMessage] = useState("");
   const [loseMessage, setLoseMessage] = useState("");
-  const [coverImage, setCoverImage] = useState<string>(DEFAULT_COVER); // Renamed from currentCover to coverImage
+  const [coverImage, setCoverImage] = useState<string>(DEFAULT_COVER);
 
   // Admin & Network State
   const [isAdmin] = useState(checkAdmin());
   const [isSyncing, setIsSyncing] = useState(false);
   const [shareUrl, setShareUrl] = useState("");
   const [isViewOnly, setIsViewOnly] = useState(false);
-  const [lockedCards, setLockedCards] = useState<Set<number>>(new Set()); // New state for locked cards
+  const [lockedCards, setLockedCards] = useState<Set<number>>(new Set());
+  const [isMusicOn, setIsMusicOn] = useState(true);
+
+  // Unique session ID per browser tab (for card locking)
+  const sessionIdRef = useRef(Math.random().toString(36).substring(2) + Date.now().toString(36));
 
   // Initialize Game (Load from Cloud or Local)
   useEffect(() => {
@@ -653,11 +657,30 @@ const App: React.FC = () => { // --- State ---
     }
   }, [config.scratchSound, config.bgMusic, config.bgMusicLoopStart, config.bgMusicLoopEnd, config.bgMusicEnabled]);
 
-  const handleCardComplete = (id: number) => {
+  const handleCardComplete = async (id: number) => {
+    // Update local state immediately
     setDeck(prevDeck => prevDeck.map(card =>
-      card.id === id ? { ...card, isPlayed: true } : card
+      card.id === id ? { ...card, isPlayed: true, lockedBy: undefined, lockedAt: undefined } : card
     ));
     setPlayedIds(prev => new Set(prev).add(id));
+
+    // Sync to Firestore so all players see this card as played
+    try {
+      await GameService.updateCardState(id, { isPlayed: true, lockedBy: undefined, lockedAt: undefined });
+    } catch (err) {
+      console.error('Failed to sync card state:', err);
+    }
+  };
+
+  // Handle card selection with locking
+  const handleSelectCard = async (cardId: number) => {
+    // Try to lock the card in Firestore first
+    const locked = await GameService.lockCard(cardId, sessionIdRef.current);
+    if (locked) {
+      setSelectedCardId(cardId);
+    } else {
+      alert('這張卡已被其他人選取，請選另一張！');
+    }
   };
 
 
@@ -734,6 +757,8 @@ const App: React.FC = () => { // --- State ---
 
   // Stats Calculations
   const totalPrizePool = deck.reduce((sum, card) => sum + card.totalPrizeAmount, 0);
+  const remainingPrizePool = deck.filter(c => !c.isPlayed).reduce((sum, card) => sum + card.totalPrizeAmount, 0);
+  const scratchedCount = deck.filter(c => c.isPlayed).length;
   const totalWinningCards = deck.filter(c => c.isWin).length;
   const winProbability = deck.length > 0 ? ((totalWinningCards / deck.length) * 100).toFixed(1) : "0.0";
 
@@ -757,21 +782,44 @@ const App: React.FC = () => { // --- State ---
             </div>
           </div>
 
-          {/* Only Admin can see Settings (hide in view-only mode) */}
-          {isAdmin && !isViewOnly && (
+          <div className="flex items-center gap-2">
+            {/* Music Toggle */}
             <button
-              onClick={() => setShowSettings(true)}
-              className="bg-white/20 p-2 rounded-full hover:bg-white/30 transition border border-white/30 backdrop-blur-md shadow-lg group"
+              onClick={() => {
+                const next = !isMusicOn;
+                setIsMusicOn(next);
+                if (next) {
+                  SOUND_MANAGER.playBgMusic();
+                } else {
+                  SOUND_MANAGER.stopBgMusic();
+                }
+              }}
+              className="bg-white/20 p-2 rounded-full hover:bg-white/30 transition border border-white/30 backdrop-blur-md shadow-lg"
+              title={isMusicOn ? '關閉音樂' : '開啟音樂'}
             >
-              <Settings className="text-white group-hover:rotate-45 transition-transform duration-500" size={24} />
+              {isMusicOn ? (
+                <Volume2 className="text-white" size={20} />
+              ) : (
+                <VolumeX className="text-white" size={20} />
+              )}
             </button>
-          )}
 
-          {isViewOnly && (
-            <div className="bg-blue-50/80 backdrop-blur-sm border border-blue-200 px-3 py-1.5 rounded-full text-[10px] font-black text-blue-700 shadow-sm">
-              🔍 預覽模式
-            </div>
-          )}
+            {/* Only Admin can see Settings (hide in view-only mode) */}
+            {isAdmin && !isViewOnly && (
+              <button
+                onClick={() => setShowSettings(true)}
+                className="bg-white/20 p-2 rounded-full hover:bg-white/30 transition border border-white/30 backdrop-blur-md shadow-lg group"
+              >
+                <Settings className="text-white group-hover:rotate-45 transition-transform duration-500" size={24} />
+              </button>
+            )}
+
+            {isViewOnly && (
+              <div className="bg-blue-50/80 backdrop-blur-sm border border-blue-200 px-3 py-1.5 rounded-full text-[10px] font-black text-blue-700 shadow-sm">
+                🔍 預覽模式
+              </div>
+            )}
+          </div>
         </header>
 
         {/* Status Bar - 2x2 Grid Layout */}
@@ -815,14 +863,14 @@ const App: React.FC = () => { // --- State ---
             </div>
           </div>
 
-          {/* Total Pool */}
+          {/* Remaining Pool */}
           <div className="bg-white px-4 py-3 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <Trophy size={14} className="text-orange-400" />
-                <span className="text-xs text-gray-400 font-bold uppercase">總獎金池</span>
+                <span className="text-xs text-gray-400 font-bold uppercase">剩餘獎金</span>
               </div>
-              <span className="text-xl font-black text-orange-500">${totalPrizePool.toLocaleString()}</span>
+              <span className="text-xl font-black text-orange-500">${remainingPrizePool.toLocaleString()}</span>
             </div>
           </div>
         </div>
@@ -832,15 +880,24 @@ const App: React.FC = () => { // --- State ---
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
             {deck.map((card) => {
               const isPlayed = playedIds.has(card.id);
+              const isLockedByOther = card.lockedBy && card.lockedBy !== sessionIdRef.current && !isPlayed;
+              const isUnavailable = isPlayed || isLockedByOther;
               return (
                 <motion.button
                   key={card.id}
-                  whileHover={{ scale: 1.03, y: -4 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={() => setSelectedCardId(card.id)}
-                  className={`w-full aspect-[3/4.2] focus:outline-none rounded-2xl overflow-hidden shadow-md relative group bg-white ${isPlayed ? 'opacity-100' : ''}`}
+                  whileHover={isUnavailable ? {} : { scale: 1.03, y: -4 }}
+                  whileTap={isUnavailable ? {} : { scale: 0.95 }}
+                  onClick={() => {
+                    if (isPlayed) return; // Already scratched, just view
+                    if (isLockedByOther) {
+                      alert('這張卡正被其他人刮中，請選另一張！');
+                      return;
+                    }
+                    handleSelectCard(card.id);
+                  }}
+                  className={`w-full aspect-[3/4.2] focus:outline-none rounded-2xl overflow-hidden shadow-md relative group bg-white ${isPlayed ? 'opacity-100' : ''} ${isLockedByOther ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
-                  {/* If played, show result summary but allow re-entry */}
+                  {/* If played, show result */}
                   {isPlayed ? (
                     <div className={`w-full h-full flex flex-col items-center justify-center border-4 ${card.isWin ? 'bg-yellow-50 border-yellow-400' : 'bg-gray-100 border-gray-300'}`}>
                       {card.isWin ? (
@@ -854,6 +911,11 @@ const App: React.FC = () => { // --- State ---
                           <span className="text-gray-400 font-bold mt-2">No Win</span>
                         </>
                       )}
+                    </div>
+                  ) : isLockedByOther ? (
+                    <div className="w-full h-full flex flex-col items-center justify-center bg-gray-200 border-4 border-gray-300">
+                      <span className="text-3xl">🔒</span>
+                      <span className="text-gray-500 font-bold mt-2 text-xs">刮獎中...</span>
                     </div>
                   ) : (
                     <img src={coverImage} alt="Cover" className="w-full h-full object-cover" />
