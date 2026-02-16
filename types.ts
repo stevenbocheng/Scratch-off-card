@@ -8,6 +8,11 @@ export interface GameConfig {
   totalCards: number;
   winMessage: string;
   loseMessage: string;
+  scratchSound?: string; // Optional custom sound URL
+  bgMusic?: string;      // Background music URL (blob or remote)
+  bgMusicLoopStart?: number; // Start time in seconds
+  bgMusicLoopEnd?: number;   // End time in seconds
+  bgMusicEnabled: boolean; // Toggle for background music
 }
 
 export interface GamePair {
@@ -25,7 +30,12 @@ export interface GameResult {
   isBonusWin: boolean; // Whether the bonus area is the winning factor
   totalPrizeAmount: number; // Total won (sum of all winning areas)
   isPlayed: boolean; // Tracking if scratched
+  isRevealed?: boolean; // UI state for animation
+  lockedBy?: string; // Session ID of locker
+  lockedAt?: number; // Timestamp of lock
 }
+
+export type CardData = GameResult;
 
 export interface ScratchCardProps {
   cardId: number;

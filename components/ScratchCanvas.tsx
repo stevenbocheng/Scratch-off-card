@@ -45,27 +45,27 @@ const ScratchCanvas: React.FC<ScratchCanvasProps> = ({
     const img = new Image();
     img.src = imageSrc;
     img.crossOrigin = "Anonymous";
-    
+
     img.onload = () => {
-        // Draw the image to fill the canvas
-        // We use 'cover' logic to maintain aspect ratio if needed, or fill
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.drawImage(img, 0, 0, width, height);
-        setIsLoaded(true);
-        
-        // Setup for scratching
-        ctx.globalCompositeOperation = 'destination-out';
+      // Draw the image to fill the canvas
+      // We use 'cover' logic to maintain aspect ratio if needed, or fill
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.drawImage(img, 0, 0, width, height);
+      setIsLoaded(true);
+
+      // Setup for scratching
+      ctx.globalCompositeOperation = 'destination-out';
     };
 
     img.onerror = () => {
-        // Fallback if image fails
-        ctx.fillStyle = '#C0C0C0';
-        ctx.fillRect(0,0,width,height);
-        ctx.font = '20px sans-serif';
-        ctx.fillStyle = '#000';
-        ctx.fillText('Scratch Here', width/2 - 50, height/2);
-        setIsLoaded(true);
-        ctx.globalCompositeOperation = 'destination-out';
+      // Fallback if image fails
+      ctx.fillStyle = '#C0C0C0';
+      ctx.fillRect(0, 0, width, height);
+      ctx.font = '20px sans-serif';
+      ctx.fillStyle = '#000';
+      ctx.fillText('Scratch Here', width / 2 - 50, height / 2);
+      setIsLoaded(true);
+      ctx.globalCompositeOperation = 'destination-out';
     };
 
   }, [width, height, imageSrc]);
@@ -76,12 +76,12 @@ const ScratchCanvas: React.FC<ScratchCanvasProps> = ({
 
   useEffect(() => {
     if (isRevealed && canvasRef.current) {
-        const canvas = canvasRef.current;
-        canvas.style.transition = 'opacity 0.8s ease-out';
-        canvas.style.opacity = '0';
-        setTimeout(() => {
-            canvas.style.display = 'none';
-        }, 800);
+      const canvas = canvasRef.current;
+      canvas.style.transition = 'opacity 0.8s ease-out';
+      canvas.style.opacity = '0';
+      setTimeout(() => {
+        canvas.style.display = 'none';
+      }, 800);
     }
   }, [isRevealed]);
 
@@ -93,12 +93,12 @@ const ScratchCanvas: React.FC<ScratchCanvasProps> = ({
 
     const w = canvas.width;
     const h = canvas.height;
-    
+
     // Check every 15th pixel to be lighter on CPU
     const imageData = ctx.getImageData(0, 0, w, h);
     const data = imageData.data;
     let clearPixels = 0;
-    const step = 15; 
+    const step = 15;
     const totalPixelsChecked = (data.length / 4) / step;
 
     for (let i = 0; i < data.length; i += step * 4) {
@@ -108,10 +108,10 @@ const ScratchCanvas: React.FC<ScratchCanvasProps> = ({
     }
 
     const percentage = (clearPixels / totalPixelsChecked) * 100;
-    
-    // Changed threshold to 95%
-    if (percentage > 95 && !isRevealed) {
-       onRevealComplete();
+
+    // Changed threshold to 1% for testing
+    if (percentage > 1 && !isRevealed) {
+      onRevealComplete();
     }
   }, [isRevealed, onRevealComplete]);
 
@@ -125,23 +125,23 @@ const ScratchCanvas: React.FC<ScratchCanvasProps> = ({
     ctx.beginPath();
     ctx.arc(x, y, brushSize, 0, Math.PI * 2);
     ctx.fill();
-    
+
     if (lastPoint.current) {
-        ctx.beginPath();
-        ctx.lineWidth = brushSize * 2;
-        ctx.lineCap = 'round';
-        ctx.moveTo(lastPoint.current.x, lastPoint.current.y);
-        ctx.lineTo(x, y);
-        ctx.stroke();
+      ctx.beginPath();
+      ctx.lineWidth = brushSize * 2;
+      ctx.lineCap = 'round';
+      ctx.moveTo(lastPoint.current.x, lastPoint.current.y);
+      ctx.lineTo(x, y);
+      ctx.stroke();
     }
 
     lastPoint.current = { x, y };
-    
+
     if (!animationFrameId.current) {
-        animationFrameId.current = requestAnimationFrame(() => {
-            checkScratchPercentage();
-            animationFrameId.current = undefined;
-        });
+      animationFrameId.current = requestAnimationFrame(() => {
+        checkScratchPercentage();
+        animationFrameId.current = undefined;
+      });
     }
   }, [brushSize, checkScratchPercentage, isLoaded]);
 
@@ -160,15 +160,15 @@ const ScratchCanvas: React.FC<ScratchCanvasProps> = ({
 
   const handleMove = (e: React.MouseEvent | React.TouchEvent) => {
     if (!isDrawing) return;
-    
+
     let clientX, clientY;
     if ('touches' in e) {
-        clientX = e.touches[0].clientX;
-        clientY = e.touches[0].clientY;
-        triggerHaptic(2);
+      clientX = e.touches[0].clientX;
+      clientY = e.touches[0].clientY;
+      triggerHaptic(2);
     } else {
-        clientX = (e as React.MouseEvent).clientX;
-        clientY = (e as React.MouseEvent).clientY;
+      clientX = (e as React.MouseEvent).clientX;
+      clientY = (e as React.MouseEvent).clientY;
     }
 
     const canvas = canvasRef.current;
