@@ -13,6 +13,7 @@ export interface GameConfig {
   bgMusicLoopStart?: number; // Start time in seconds
   bgMusicLoopEnd?: number;   // End time in seconds
   bgMusicEnabled: boolean; // Toggle for background music
+  coverImage?: string;     // Base64 data URL for custom cover image
 }
 
 export interface GamePair {

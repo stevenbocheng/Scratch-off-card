@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings, X, Cat, Trophy, RotateCcw, Upload, Image as ImageIcon, Plus, Trash2, Percent, Coins, MessageSquare } from 'lucide-react';
+import { Settings, X, Cat, Trophy, RotateCcw, Upload, Image as ImageIcon, Plus, Trash2, Percent, Coins, MessageSquare, Cloud, Link as LinkIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ScratchCanvas from './components/ScratchCanvas';
 import ResultModal from './components/ResultModal';
 import { generateDeck, SoundManager, triggerHaptic } from './utils';
-import { Share2, Lock, Cloud, Link as LinkIcon, AlertCircle } from "lucide-react";
 import { GameService, GameState } from "./services/gameService";
 import { GameConfig, GameResult } from './types';
 
@@ -56,7 +55,8 @@ const SettingsPanel: React.FC<{
   onSave?: () => void;
   onShare?: () => void;
   isSyncing?: boolean;
-}> = ({ isOpen, onClose, config, setConfig, onRegenerate, onUploadCover, currentCover, onSave, onShare, isSyncing }) => {
+  onShareSnapshot?: () => void;
+}> = ({ isOpen, onClose, config, setConfig, onRegenerate, onUploadCover, currentCover, onSave, onShare, isSyncing, onShareSnapshot }) => {
 
   // Helper to update a tier
   const updateTier = (index: number, field: 'count' | 'amount', value: number) => {
@@ -317,6 +317,17 @@ const SettingsPanel: React.FC<{
                   複製玩家專用連結
                 </button>
               )}
+
+              {onShareSnapshot && (
+                <button
+                  onClick={onShareSnapshot}
+                  disabled={isSyncing}
+                  className="w-full py-3 bg-purple-50 text-purple-700 border border-purple-200 rounded-xl font-bold hover:bg-purple-100 transition flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isSyncing ? <RotateCcw className="animate-spin" size={18} /> : <Cloud size={18} />}
+                  {isSyncing ? '產生中...' : '產生雲端分享連結'}
+                </button>
+              )}
             </div>
 
           </motion.div>
@@ -536,24 +547,60 @@ const App: React.FC = () => { // --- State ---
   const [isAdmin] = useState(checkAdmin());
   const [isSyncing, setIsSyncing] = useState(false);
   const [shareUrl, setShareUrl] = useState("");
+  const [isViewOnly, setIsViewOnly] = useState(false);
   const [lockedCards, setLockedCards] = useState<Set<number>>(new Set()); // New state for locked cards
 
   // Initialize Game (Load from Cloud or Local)
   useEffect(() => {
-    // Subscribe to Firebase updates
-    // If we are just a player, we listen.
-    // If we are admin, we might want to edit locally first, but usually we also listen to see current state.
+    const params = new URLSearchParams(window.location.search);
+    const snapshotId = params.get('id');
+
+    // If URL has ?id=xxx, load that snapshot instead of the default game
+    if (snapshotId) {
+      const loadSnapshot = async () => {
+        try {
+          setIsSyncing(true);
+          const data = await GameService.getCard(snapshotId);
+          if (data) {
+            console.log("Loaded snapshot:", data);
+            setConfig(data.config);
+            setDeck(data.deck);
+            setIsViewOnly(true);
+            if (data.config.coverImage) {
+              setCoverImage(data.config.coverImage);
+            }
+            const played = data.deck.filter(c => c.isPlayed).map(c => c.id);
+            setPlayedIds(new Set(played));
+          } else {
+            alert("找不到該分享卡片。");
+          }
+        } catch (err) {
+          console.error(err);
+          alert("載入分享資料失敗。");
+        } finally {
+          setIsSyncing(false);
+        }
+      };
+      loadSnapshot();
+      return; // Don't subscribe to the default game
+    }
+
+    // Subscribe to Firebase updates for the default game
     const unsubscribe = GameService.subscribeToGame((data) => {
-      if (data) {
+      if (data && data.config && Array.isArray(data.deck)) {
         console.log("Received game update from cloud:", data);
         setConfig(data.config);
         setDeck(data.deck);
         // Update played IDs based on deck content
         const played = data.deck.filter(c => c.isPlayed).map(c => c.id);
         setPlayedIds(new Set(played));
-        setLockedCards(new Set(data.lockedCards || [])); // Initialize lockedCards
+        setLockedCards(new Set(data.lockedCards || []));
+        // Apply cover image from config if exists
+        if (data.config.coverImage) {
+          setCoverImage(data.config.coverImage);
+        }
       } else {
-        // No game in cloud, use default or local
+        // No valid game in cloud, use default or local
         if (deck.length === 0) {
           setDeck(generateDeck(DEFAULT_CONFIG));
         }
@@ -561,7 +608,7 @@ const App: React.FC = () => { // --- State ---
     });
 
     return () => unsubscribe();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Update sound when config changes
   useEffect(() => {
@@ -614,11 +661,33 @@ const App: React.FC = () => { // --- State ---
     });
   };
 
+  const handleShareCloudLink = async () => {
+    setIsSyncing(true);
+    try {
+      const id = await GameService.saveCard(config, deck);
+      let baseUrl = window.location.origin + window.location.pathname;
+      // If localhost, point to GitHub Pages for convenience
+      if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        baseUrl = "https://stevenbocheng.github.io/Scratch-off-card/";
+      }
+      const shareUrl = `${baseUrl}?id=${id}`;
+      prompt("雲端連結已產生！請複製此連結：", shareUrl);
+    } catch (err) {
+      console.error(err);
+      alert("產生連結失敗。");
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   const handleUploadCover = (file: File) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       if (e.target?.result) {
-        setCoverImage(e.target.result as string);
+        const base64 = e.target.result as string;
+        setCoverImage(base64);
+        // Also save to config so it persists when saved to cloud
+        setConfig(prev => ({ ...prev, coverImage: base64 }));
       }
     };
     reader.readAsDataURL(file);
@@ -652,14 +721,20 @@ const App: React.FC = () => { // --- State ---
             </div>
           </div>
 
-          {/* Only Admin can see Settings */}
-          {isAdmin && (
+          {/* Only Admin can see Settings (hide in view-only mode) */}
+          {isAdmin && !isViewOnly && (
             <button
               onClick={() => setShowSettings(true)}
               className="bg-white/20 p-2 rounded-full hover:bg-white/30 transition border border-white/30 backdrop-blur-md shadow-lg group"
             >
               <Settings className="text-white group-hover:rotate-45 transition-transform duration-500" size={24} />
             </button>
+          )}
+
+          {isViewOnly && (
+            <div className="bg-blue-50/80 backdrop-blur-sm border border-blue-200 px-3 py-1.5 rounded-full text-[10px] font-black text-blue-700 shadow-sm">
+              🔍 預覽模式
+            </div>
           )}
         </header>
 
@@ -768,6 +843,7 @@ const App: React.FC = () => { // --- State ---
           isSyncing={isSyncing}
           onUploadCover={handleUploadCover}
           currentCover={coverImage}
+          onShareSnapshot={handleShareCloudLink}
         />
       </div>
     );

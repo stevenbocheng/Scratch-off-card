@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { initializeFirestore, getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
     apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -11,4 +11,13 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
+
+let db;
+try {
+    db = initializeFirestore(app, { ignoreUndefinedProperties: true });
+} catch {
+    // Already initialized (e.g. Vite HMR), reuse existing instance
+    db = getFirestore(app);
+}
+
+export { db };
