@@ -191,8 +191,17 @@ const SettingsPanel: React.FC<{
                       onChange={(e) => {
                         const file = e.target.files?.[0];
                         if (file) {
-                          const url = URL.createObjectURL(file);
-                          setConfig({ ...config, bgMusic: url });
+                          if (file.size > 800 * 1024) {
+                            alert(`音樂檔案太大 (${(file.size / 1024).toFixed(0)}KB)。建議小於 800KB 以避免超過 Firestore 儲存限制。`);
+                            return;
+                          }
+                          const reader = new FileReader();
+                          reader.onload = (ev) => {
+                            if (ev.target?.result) {
+                              setConfig({ ...config, bgMusic: ev.target.result as string });
+                            }
+                          };
+                          reader.readAsDataURL(file);
                         }
                       }}
                     />
