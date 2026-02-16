@@ -11,7 +11,7 @@ import { GameConfig, GameResult } from './types';
 // (We keep the original types here or import them if you prefer)
 // But GameConfig is defined in types.ts, imported in App.
 
-const MAX_SCRATCH_PERCENTAGE = 1; // Threshold to reveal card (1%)
+const MAX_SCRATCH_PERCENTAGE = 95; // Threshold to reveal card (95%)
 
 // --- Utility: Get Admin Status ---
 const checkAdmin = () => {
@@ -36,6 +36,9 @@ const DEFAULT_CONFIG: GameConfig = {
   bgMusicLoopEnd: 0,
   bgMusicEnabled: true,
 };
+
+// Hard-coded BGM path — file lives in public/bgm.mp3
+const DEFAULT_BGM = `${import.meta.env.BASE_URL}bgm.mp3`;
 
 // --- Default SVG Cover (Fallback) ---
 const DEFAULT_COVER = `data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='600' viewBox='0 0 400 600'%3E%3Cdefs%3E%3ClinearGradient id='bg' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%23FCD34D'/%3E%3Cstop offset='100%25' stop-color='%23F59E0B'/%3E%3C/linearGradient%3E%3Cpattern id='pattern' width='40' height='40' patternUnits='userSpaceOnUse'%3E%3Ccircle cx='20' cy='20' r='2' fill='%23FFFFFF' opacity='0.3'/%3E%3C/pattern%3E%3C/defs%3E%3Crect width='100%25' height='100%25' fill='url(%23bg)'/%3E%3Crect width='100%25' height='100%25' fill='url(%23pattern)'/%3E%3Ccircle cx='200' cy='220' r='100' fill='%23FFFBEB' stroke='%23FBBF24' stroke-width='8'/%3E%3Cpath d='M160 180 Q200 220 240 180 Q260 140 220 120 Q200 140 180 120 Q140 140 160 180' fill='%23F59E0B'/%3E%3Ctext x='200' y='400' font-family='sans-serif' font-weight='900' font-size='48' fill='%2378350F' text-anchor='middle' stroke='%23FFF' stroke-width='2'%3ELUCKY%3C/text%3E%3Ctext x='200' y='450' font-family='sans-serif' font-weight='900' font-size='48' fill='%2378350F' text-anchor='middle' stroke='%23FFF' stroke-width='2'%3EPAWS%3C/text%3E%3Crect x='50' y='500' width='300' height='60' rx='30' fill='%23FFFFFF' stroke='%2378350F' stroke-width='4'/%3E%3Ctext x='200' y='542' font-family='sans-serif' font-weight='bold' font-size='24' fill='%23D97706' text-anchor='middle'%3ESCRATCH TO WIN%3C/text%3E%3C/svg%3E`;
@@ -183,13 +186,27 @@ const SettingsPanel: React.FC<{
                   <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">音樂 URL (外部連結)</label>
                   <input
                     type="url"
-                    placeholder="https://example.com/music.mp3"
+                    placeholder="https://drive.google.com/file/d/xxx/view 或直接 MP3 連結"
                     value={config.bgMusic && !config.bgMusic.startsWith('blob:') ? config.bgMusic : ''}
                     onChange={(e) => setConfig({ ...config, bgMusic: e.target.value })}
+                    onBlur={(e) => {
+                      let url = e.target.value.trim();
+                      // Auto-convert Google Drive share URL → direct download
+                      const gdMatch = url.match(/drive\.google\.com\/file\/d\/([^/]+)/);
+                      if (gdMatch) {
+                        url = `https://drive.google.com/uc?export=download&id=${gdMatch[1]}`;
+                        setConfig({ ...config, bgMusic: url });
+                      }
+                      // Auto-convert Dropbox share URL → direct download
+                      if (url.includes('dropbox.com') && url.includes('dl=0')) {
+                        url = url.replace('dl=0', 'dl=1');
+                        setConfig({ ...config, bgMusic: url });
+                      }
+                    }}
                     className="w-full border border-purple-200 rounded-lg px-3 py-2 font-bold text-gray-700 text-sm focus:ring-2 focus:ring-purple-400 focus:outline-none"
                   />
                   <p className="text-[9px] text-gray-400 mt-1">
-                    貼上 MP3 外部連結（Google Drive 直連、Dropbox 等）。避免使用本機檔案。
+                    直接貼 Google Drive 分享連結即可，系統會自動轉換成直連格式。
                   </p>
                   {config.bgMusic && (
                     <button
@@ -617,10 +634,20 @@ const App: React.FC = () => { // --- State ---
     if (config.scratchSound) {
       SOUND_MANAGER.setScratchSound(config.scratchSound);
     }
-    // Update Background Music
-    if (config.bgMusic) {
-      SOUND_MANAGER.setBgMusic(config.bgMusic, config.bgMusicLoopStart, config.bgMusicLoopEnd);
-      SOUND_MANAGER.setBgMusicEnabled(config.bgMusicEnabled);
+    // Update Background Music — fallback to DEFAULT_BGM if config is empty
+    const musicUrl = config.bgMusic || DEFAULT_BGM;
+    SOUND_MANAGER.setBgMusic(musicUrl, config.bgMusicLoopStart, config.bgMusicLoopEnd);
+    if (config.bgMusicEnabled !== false) {
+      // Try to play immediately (works if user already interacted)
+      SOUND_MANAGER.playBgMusic();
+      // Also set up one-time listener for first interaction (autoplay policy)
+      const startMusic = () => {
+        SOUND_MANAGER.playBgMusic();
+        document.removeEventListener('click', startMusic);
+        document.removeEventListener('touchstart', startMusic);
+      };
+      document.addEventListener('click', startMusic, { once: true });
+      document.addEventListener('touchstart', startMusic, { once: true });
     } else {
       SOUND_MANAGER.stopBgMusic();
     }
