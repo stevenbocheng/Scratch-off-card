@@ -23,16 +23,20 @@ export interface GamePair {
   isWin: boolean;
 }
 
+export type CardStatus = 'available' | 'scratching' | 'completed';
+
 export interface GameResult {
   id: number;
   isWin: boolean;
+  status: CardStatus; // State machine: available → scratching → completed
   games: GamePair[]; // 2 comparison rows
   bonusPrize: number; // The prize in the bottom bonus area
   isBonusWin: boolean; // Whether the bonus area is the winning factor
   totalPrizeAmount: number; // Total won (sum of all winning areas)
-  isPlayed: boolean; // Tracking if scratched
+  isPlayed: boolean; // Kept for backward compat
+  progress: number; // 0-100 scratch percentage
   isRevealed?: boolean; // UI state for animation
-  lockedBy?: string; // Session ID of locker
+  lockedBy?: string; // UID of locker
   lockedAt?: number; // Timestamp of lock
 }
 

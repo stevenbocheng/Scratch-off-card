@@ -118,11 +118,13 @@ const createCardResult = (id: number, isWin: boolean, prizeAmount: number): Game
   return {
     id,
     isWin, // Overall card win status
+    status: 'available' as const,
     games,
     bonusPrize,
     isBonusWin,
     totalPrizeAmount: calculatedTotal, // Should match prizeAmount passed in
-    isPlayed: false
+    isPlayed: false,
+    progress: 0,
   };
 };
 

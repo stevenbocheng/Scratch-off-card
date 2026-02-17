@@ -1,5 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { initializeFirestore, getFirestore } from "firebase/firestore";
+import { getAuth, signInAnonymously, onAuthStateChanged, User } from "firebase/auth";
 
 const firebaseConfig = {
     apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -21,3 +22,19 @@ try {
 }
 
 export { db };
+
+// --- Auth ---
+export const auth = getAuth(app);
+
+let _currentUser: User | null = null;
+onAuthStateChanged(auth, (user) => { _currentUser = user; });
+
+/**
+ * Ensure anonymous auth. Returns UID.
+ * If already signed in, returns immediately.
+ */
+export async function ensureAuth(): Promise<string> {
+    if (_currentUser) return _currentUser.uid;
+    const cred = await signInAnonymously(auth);
+    return cred.user.uid;
+}

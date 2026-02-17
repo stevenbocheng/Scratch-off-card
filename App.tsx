@@ -1,17 +1,18 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Settings, X, Cat, Trophy, RotateCcw, Upload, Image as ImageIcon, Plus, Trash2, Percent, Coins, MessageSquare, Cloud, Link as LinkIcon, Volume2, VolumeX } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ScratchCanvas from './components/ScratchCanvas';
 import ResultModal from './components/ResultModal';
 import { generateDeck, SoundManager, triggerHaptic } from './utils';
-import { GameService, GameState } from "./services/gameService";
+import { GameService } from "./services/gameService";
 import { GameConfig, GameResult } from './types';
+import { useAuth } from './hooks/useAuth';
+import { useCards } from './hooks/useCards';
+import { ensureAuth } from './firebaseConfig';
 
 // --- Configuration & Types ---
-// (We keep the original types here or import them if you prefer)
-// But GameConfig is defined in types.ts, imported in App.
 
-const MAX_SCRATCH_PERCENTAGE = 95; // Threshold to reveal card (95%)
+const REVEAL_THRESHOLD = 90; // % to auto-complete (set to 1 for testing)
 
 // --- Utility: Get Admin Status ---
 const checkAdmin = () => {
@@ -59,7 +60,9 @@ const SettingsPanel: React.FC<{
   onShare?: () => void;
   isSyncing?: boolean;
   onShareSnapshot?: () => void;
-}> = ({ isOpen, onClose, config, setConfig, onRegenerate, onUploadCover, currentCover, onSave, onShare, isSyncing, onShareSnapshot }) => {
+  onResetLocks?: () => void;
+  onResetProgress?: () => void;
+}> = ({ isOpen, onClose, config, setConfig, onRegenerate, onUploadCover, currentCover, onSave, onShare, isSyncing, onShareSnapshot, onResetLocks, onResetProgress }) => {
 
   // Helper to update a tier
   const updateTier = (index: number, field: 'count' | 'amount', value: number) => {
@@ -347,6 +350,29 @@ const SettingsPanel: React.FC<{
                   {isSyncing ? '產生中...' : '產生雲端分享連結'}
                 </button>
               )}
+
+              {onResetLocks && (
+                <div className="flex gap-2">
+                  <button
+                    onClick={onResetLocks}
+                    disabled={isSyncing}
+                    className="flex-1 py-3 bg-red-50 text-red-700 border border-red-200 rounded-xl font-bold hover:bg-red-100 transition flex items-center justify-center gap-2 disabled:opacity-50 text-sm"
+                  >
+                    <RotateCcw size={16} />
+                    清除卡住鎖定
+                  </button>
+                  {onResetProgress && (
+                    <button
+                      onClick={onResetProgress}
+                      disabled={isSyncing}
+                      className="flex-1 py-3 bg-orange-50 text-orange-700 border border-orange-200 rounded-xl font-bold hover:bg-orange-100 transition flex items-center justify-center gap-2 disabled:opacity-50 text-sm"
+                    >
+                      <RotateCcw size={16} />
+                      重置所有進度
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
           </motion.div>
@@ -409,9 +435,11 @@ const ScratchCardGame: React.FC<{
   loseMessage: string;
   onBack: () => void;
   onComplete: (id: number) => void;
-}> = ({ cardData, coverImage, winMessage, loseMessage, onBack, onComplete }) => {
+  onProgressUpdate?: (percentage: number) => void;
+  revealThreshold?: number;
+}> = ({ cardData, coverImage, winMessage, loseMessage, onBack, onComplete, onProgressUpdate, revealThreshold = REVEAL_THRESHOLD }) => {
   // If card is already played, start as revealed
-  const isAlreadyPlayed = cardData.isPlayed;
+  const isAlreadyPlayed = cardData.isPlayed || cardData.status === 'completed';
   const [isRevealed, setIsRevealed] = useState(isAlreadyPlayed);
   const [showModal, setShowModal] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -447,13 +475,14 @@ const ScratchCardGame: React.FC<{
     if (!isRevealed) {
       triggerHaptic([20, 50, 20]);
       setIsRevealed(true);
+      setShowModal(true); // <--- Add this to pop the result modal
       SOUND_MANAGER.stopScratch();
       onComplete(cardData.id);
     }
   };
 
   // Allow closing if revealed OR if it was already played before entering
-  const canClose = isRevealed || isAlreadyPlayed;
+  const canClose = isRevealed || isAlreadyPlayed || cardData.status === 'completed';
 
   return (
     <div className="min-h-screen bg-[#FFF8F0] flex flex-col items-center pt-6 pb-4 px-4 relative overflow-hidden">
@@ -529,7 +558,9 @@ const ScratchCardGame: React.FC<{
                 onScratchStart={handleScratchStart}
                 onScratchEnd={handleScratchEnd}
                 onRevealComplete={handleRevealComplete}
+                onProgressUpdate={onProgressUpdate}
                 isRevealed={isRevealed}
+                revealThreshold={revealThreshold}
               />
             )}
           </div>
@@ -551,10 +582,15 @@ const ScratchCardGame: React.FC<{
 /**
  * Main App Component
  */
-const App: React.FC = () => { // --- State ---
+const App: React.FC = () => {
+  // --- Auth & Cards Hooks ---
+  const { uid, loading: authLoading } = useAuth();
+  const params = new URLSearchParams(window.location.search);
+  const snapshotId = params.get('id');
+  const { cards: deck, config: cloudConfig, loading: cardsLoading, setCards: setDeck, setConfig: setCloudConfig } = useCards(snapshotId);
+
+  // --- State ---
   const [config, setConfig] = useState<GameConfig>(DEFAULT_CONFIG);
-  const [deck, setDeck] = useState<GameResult[]>([]);
-  const [playedIds, setPlayedIds] = useState<Set<number>>(new Set());
   const [selectedCardId, setSelectedCardId] = useState<number | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showModal, setShowModal] = useState(false);
@@ -566,72 +602,82 @@ const App: React.FC = () => { // --- State ---
   const [isAdmin] = useState(checkAdmin());
   const [isSyncing, setIsSyncing] = useState(false);
   const [shareUrl, setShareUrl] = useState("");
-  const [isViewOnly, setIsViewOnly] = useState(false);
-  const [lockedCards, setLockedCards] = useState<Set<number>>(new Set());
+  const isViewOnly = !!snapshotId;
   const [isMusicOn, setIsMusicOn] = useState(true);
 
-  // Unique session ID per browser tab (for card locking)
-  const sessionIdRef = useRef(Math.random().toString(36).substring(2) + Date.now().toString(36));
+  // --- Local Sync Cache (Solves Ghost Locks & F5 Loops) ---
+  const [localDone, setLocalDone] = useState<Set<number>>(new Set());
 
-  // Initialize Game (Load from Cloud or Local)
+  // Load local cache on mount
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const snapshotId = params.get('id');
-
-    // If URL has ?id=xxx, load that snapshot instead of the default game
-    if (snapshotId) {
-      const loadSnapshot = async () => {
-        try {
-          setIsSyncing(true);
-          const data = await GameService.getCard(snapshotId);
-          if (data) {
-            console.log("Loaded snapshot:", data);
-            setConfig(data.config);
-            setDeck(data.deck);
-            setIsViewOnly(true);
-            if (data.config.coverImage) {
-              setCoverImage(data.config.coverImage);
-            }
-            const played = data.deck.filter(c => c.isPlayed).map(c => c.id);
-            setPlayedIds(new Set(played));
-          } else {
-            alert("找不到該分享卡片。");
-          }
-        } catch (err) {
-          console.error(err);
-          alert("載入分享資料失敗。");
-        } finally {
-          setIsSyncing(false);
-        }
-      };
-      loadSnapshot();
-      return; // Don't subscribe to the default game
-    }
-
-    // Subscribe to Firebase updates for the default game
-    const unsubscribe = GameService.subscribeToGame((data) => {
-      if (data && data.config && Array.isArray(data.deck)) {
-        console.log("Received game update from cloud:", data);
-        setConfig(data.config);
-        setDeck(data.deck);
-        // Update played IDs based on deck content
-        const played = data.deck.filter(c => c.isPlayed).map(c => c.id);
-        setPlayedIds(new Set(played));
-        setLockedCards(new Set(data.lockedCards || []));
-        // Apply cover image from config if exists
-        if (data.config.coverImage) {
-          setCoverImage(data.config.coverImage);
-        }
-      } else {
-        // No valid game in cloud, use default or local
-        if (deck.length === 0) {
-          setDeck(generateDeck(DEFAULT_CONFIG));
-        }
+    const saved = localStorage.getItem('local_completed_ids');
+    if (saved) {
+      try {
+        setLocalDone(new Set(JSON.parse(saved)));
+      } catch (e) {
+        console.error('Failed to parse local_completed_ids', e);
       }
-    });
+    }
+  }, []);
 
-    return () => unsubscribe();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const addToLocalDone = (id: number) => {
+    const next = new Set([...localDone, id]);
+    setLocalDone(next);
+    localStorage.setItem('local_completed_ids', JSON.stringify(Array.from(next)));
+  };
+
+  const clearLocalDone = () => {
+    setLocalDone(new Set());
+    localStorage.removeItem('local_completed_ids');
+  };
+
+  // Merge Firestore data with local "Done" cache
+  const mergedDeck = useMemo(() => {
+    return deck.map(c =>
+      localDone.has(c.id) ? { ...c, status: 'completed' as const, isPlayed: true, progress: 100 } : c
+    );
+  }, [deck, localDone]);
+
+  // Derived state
+  const playedIds = useMemo(() => new Set(mergedDeck.filter(c => c.isPlayed || c.status === 'completed').map(c => c.id)), [mergedDeck]);
+
+  // Sync cloud config to local config state
+  useEffect(() => {
+    if (cloudConfig) {
+      setConfig(cloudConfig);
+      if (cloudConfig.coverImage) setCoverImage(cloudConfig.coverImage);
+    }
+  }, [cloudConfig]);
+
+  // If no cloud data and not snapshot mode, generate local deck
+  useEffect(() => {
+    if (!cardsLoading && !snapshotId && deck.length === 0 && !cloudConfig) {
+      setDeck(generateDeck(DEFAULT_CONFIG));
+    }
+  }, [cardsLoading, snapshotId, deck.length, cloudConfig, setDeck]);
+
+  // --- Phase 2: Anti-F5 auto-recovery ---
+  const hasRecovered = useRef(false);
+  useEffect(() => {
+    if (authLoading || cardsLoading || !uid || isViewOnly || hasRecovered.current) return;
+    // Check if user has an active (scratching) card
+    const myActiveCard = mergedDeck.find(c => c.status === 'scratching' && c.lockedBy === uid);
+    if (myActiveCard && !selectedCardId) {
+      console.log('Anti-F5: recovering card', myActiveCard.id);
+      setSelectedCardId(myActiveCard.id);
+    }
+    // Only run recovery once on initial load
+    hasRecovered.current = true;
+  }, [authLoading, cardsLoading, uid, mergedDeck, selectedCardId, isViewOnly]);
+
+  // localStorage cache for active card (quick display before Firebase loads)
+  useEffect(() => {
+    if (selectedCardId !== null) {
+      localStorage.setItem('active_card', String(selectedCardId));
+    } else {
+      localStorage.removeItem('active_card');
+    }
+  }, [selectedCardId]);
 
   // Update sound when config changes
   useEffect(() => {
@@ -641,12 +687,18 @@ const App: React.FC = () => { // --- State ---
     // Update Background Music — fallback to DEFAULT_BGM if config is empty
     const musicUrl = config.bgMusic || DEFAULT_BGM;
     SOUND_MANAGER.setBgMusic(musicUrl, config.bgMusicLoopStart, config.bgMusicLoopEnd);
-    if (config.bgMusicEnabled !== false) {
+
+    // Master switch: Config (Admin) AND Player toggle
+    const shouldPlay = (config.bgMusicEnabled !== false) && isMusicOn;
+
+    if (shouldPlay) {
       // Try to play immediately (works if user already interacted)
       SOUND_MANAGER.playBgMusic();
       // Also set up one-time listener for first interaction (autoplay policy)
       const startMusic = () => {
-        SOUND_MANAGER.playBgMusic();
+        if ((config.bgMusicEnabled !== false) && isMusicOn) {
+          SOUND_MANAGER.playBgMusic();
+        }
         document.removeEventListener('click', startMusic);
         document.removeEventListener('touchstart', startMusic);
       };
@@ -655,43 +707,66 @@ const App: React.FC = () => { // --- State ---
     } else {
       SOUND_MANAGER.stopBgMusic();
     }
-  }, [config.scratchSound, config.bgMusic, config.bgMusicLoopStart, config.bgMusicLoopEnd, config.bgMusicEnabled]);
+  }, [config.scratchSound, config.bgMusic, config.bgMusicLoopStart, config.bgMusicLoopEnd, config.bgMusicEnabled, isMusicOn]);
 
   const handleCardComplete = async (id: number) => {
+    // 立即更新本地強效緩存 (解決 F5 與同步延遲問題)
+    addToLocalDone(id);
+
     // Update local state immediately
     setDeck(prevDeck => prevDeck.map(card =>
-      card.id === id ? { ...card, isPlayed: true, lockedBy: undefined, lockedAt: undefined } : card
+      card.id === id ? { ...card, status: 'completed' as const, isPlayed: true, progress: 100, lockedBy: undefined, lockedAt: undefined } : card
     ));
-    setPlayedIds(prev => new Set(prev).add(id));
 
-    // Sync to Firestore so all players see this card as played
+    // Sync to Firestore
     try {
-      await GameService.updateCardState(id, { isPlayed: true, lockedBy: undefined, lockedAt: undefined });
+      await GameService.completeCard(id);
     } catch (err) {
-      console.error('Failed to sync card state:', err);
+      console.error('Failed to complete card:', err);
     }
   };
 
-  // Handle card selection with locking
+  // Handle card selection with locking + anti-cheat binding
   const handleSelectCard = async (cardId: number) => {
-    // Try to lock the card in Firestore first
-    const locked = await GameService.lockCard(cardId, sessionIdRef.current);
+    // Ensure we have the latest UID (prevents race where hook uid is still null)
+    const userId = await ensureAuth();
+    if (!userId) return;
+
+    // 1. If we ALREADY have this card locked (e.g. refresh/re-entry), just enter it
+    const card = mergedDeck.find(c => c.id === cardId);
+    if (card && (card.status === 'scratching' || localDone.has(card.id)) && card.lockedBy === userId) {
+      setSelectedCardId(cardId);
+      return;
+    }
+
+    // 2. Anti-cheat: if user already has A DIFFERENT scratching card, force back to it
+    const myActiveCard = mergedDeck.find(c => c.status === 'scratching' && c.lockedBy === userId);
+    if (myActiveCard) {
+      setSelectedCardId(myActiveCard.id);
+      return;
+    }
+
+    // 3. Try to lock the new card in Firestore
+    const locked = await GameService.lockCard(cardId);
     if (locked) {
       setSelectedCardId(cardId);
     } else {
-      alert('這張卡已被其他人選取，請選另一張！');
+      alert('這張卡已被其他人選取或你已有進行中的卡片！');
     }
   };
 
 
 
   const regenerateDeckHandler = () => {
+    clearLocalDone();
     setDeck(generateDeck(config));
-    setPlayedIds(new Set());
   };
 
   const handleSaveToCloud = async () => {
     if (!confirm("確定要發布當前牌組到雲端嗎？這將覆蓋現有的雲端資料。")) return;
+
+    // 清除本地緩存，因為發布了新牌組
+    clearLocalDone();
 
     // Sanitize blob: URLs — they only work locally and break for other users
     const cleanConfig = {
@@ -702,8 +777,11 @@ const App: React.FC = () => { // --- State ---
 
     setIsSyncing(true);
     try {
+      // IMPORTANT: Use the raw 'deck' state for saving. 
+      // This ensures that if we just regenerated, we save the CLEAN cards.
+      // If we are just updating config, 'deck' already contains the synced server statuses.
       await GameService.saveGameToCloud(cleanConfig, deck);
-      alert("發布成功！玩家現在可以看到新的牌組了。");
+      alert("發布成功！所有玩家現在將看到最新的設定與牌組。");
       setShareUrl(window.location.origin + window.location.pathname);
     } catch (e) {
       console.error(e);
@@ -752,15 +830,77 @@ const App: React.FC = () => { // --- State ---
     reader.readAsDataURL(file);
   };
 
+  const handleResetLocks = async () => {
+    if (!confirm("確定要強制清除所有卡片的『刮獎中』狀態嗎？這通常在多人同時卡死時使用。")) return;
+    setIsSyncing(true);
+    try {
+      await GameService.resetAllLocks();
+      alert("鎖定已清除！");
+    } catch (err) {
+      console.error(err);
+      alert("操作失敗。");
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleResetProgress = async () => {
+    if (!confirm("確定要重置所有人的進度嗎？這會讓這 100 張卡片全部變回未刮狀態（中獎號碼不變）。")) return;
+
+    // 立即清空本地緩存
+    clearLocalDone();
+
+    const cleanDeck = deck.map(c => ({
+      ...c,
+      status: 'available' as const,
+      isPlayed: false,
+      isRevealed: false,
+      progress: 0,
+      lockedBy: undefined,
+      lockedAt: undefined
+    }));
+
+    setIsSyncing(true);
+    try {
+      await GameService.saveGameToCloud(config, cleanDeck);
+      setDeck(cleanDeck);
+      alert("全域進度已重置！現在大家可以重新刮了。");
+    } catch (err) {
+      console.error(err);
+      alert("重置失敗。");
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   // Find the selected card object
-  const selectedCard = deck.find(c => c.id === selectedCardId);
+  const selectedCard = mergedDeck.find(c => c.id === selectedCardId);
 
   // Stats Calculations
-  const totalPrizePool = deck.reduce((sum, card) => sum + card.totalPrizeAmount, 0);
-  const remainingPrizePool = deck.filter(c => !c.isPlayed).reduce((sum, card) => sum + card.totalPrizeAmount, 0);
-  const scratchedCount = deck.filter(c => c.isPlayed).length;
-  const totalWinningCards = deck.filter(c => c.isWin).length;
-  const winProbability = deck.length > 0 ? ((totalWinningCards / deck.length) * 100).toFixed(1) : "0.0";
+  const totalPrizePool = mergedDeck.reduce((sum, card) => sum + card.totalPrizeAmount, 0);
+  const remainingPrizePool = mergedDeck.filter(c => !c.isPlayed).reduce((sum, card) => sum + card.totalPrizeAmount, 0);
+  const scratchedCount = mergedDeck.filter(c => c.isPlayed).length;
+  const totalWinningCards = mergedDeck.filter(c => c.isWin).length;
+  const winProbability = mergedDeck.length > 0 ? ((totalWinningCards / mergedDeck.length) * 100).toFixed(1) : "0.0";
+
+  // Global Loading Protector
+  if (authLoading || (cardsLoading && mergedDeck.length === 0)) {
+    return (
+      <div className="min-h-screen bg-[#FFF8F0] flex flex-col items-center justify-center font-sans">
+        <motion.div
+          animate={{ y: [0, -20, 0], scale: [1, 1.1, 1] }}
+          transition={{ repeat: Infinity, duration: 1 }}
+          className="text-6xl mb-4"
+        >
+          🐱
+        </motion.div>
+        <p className="text-orange-500 font-black text-xl tracking-widest animate-pulse">
+          LUCKY DATA LOADING...
+        </p>
+        <p className="text-gray-400 text-xs mt-2 font-bold">正在同步雲端資料，請稍候</p>
+      </div>
+    );
+  }
 
   // Home Screen
   if (!selectedCard) {
@@ -785,15 +925,7 @@ const App: React.FC = () => { // --- State ---
           <div className="flex items-center gap-2">
             {/* Music Toggle */}
             <button
-              onClick={() => {
-                const next = !isMusicOn;
-                setIsMusicOn(next);
-                if (next) {
-                  SOUND_MANAGER.playBgMusic();
-                } else {
-                  SOUND_MANAGER.stopBgMusic();
-                }
-              }}
+              onClick={() => setIsMusicOn(!isMusicOn)}
               className="bg-white/20 p-2 rounded-full hover:bg-white/30 transition border border-white/30 backdrop-blur-md shadow-lg"
               title={isMusicOn ? '關閉音樂' : '開啟音樂'}
             >
@@ -878,24 +1010,30 @@ const App: React.FC = () => { // --- State ---
         {/* Grid */}
         <div className="max-w-4xl mx-auto pb-8">
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-            {deck.map((card) => {
-              const isPlayed = playedIds.has(card.id);
-              const isLockedByOther = card.lockedBy && card.lockedBy !== sessionIdRef.current && !isPlayed;
+            {mergedDeck.map((card) => {
+              const isPlayed = playedIds.has(card.id) || card.status === 'completed';
+              // Important: only mark as locked by other if we KNOW who we are (uid is loaded)
+              const isLockedByOther = !authLoading && !!uid && card.status === 'scratching' && card.lockedBy && card.lockedBy !== uid;
+              const isLockedByMe = !authLoading && !!uid && card.status === 'scratching' && card.lockedBy === uid;
               const isUnavailable = isPlayed || isLockedByOther;
+
               return (
                 <motion.button
                   key={card.id}
                   whileHover={isUnavailable ? {} : { scale: 1.03, y: -4 }}
                   whileTap={isUnavailable ? {} : { scale: 0.95 }}
                   onClick={() => {
-                    if (isPlayed) return; // Already scratched, just view
+                    if (isPlayed) {
+                      setSelectedCardId(card.id);
+                      return;
+                    }
                     if (isLockedByOther) {
                       alert('這張卡正被其他人刮中，請選另一張！');
                       return;
                     }
                     handleSelectCard(card.id);
                   }}
-                  className={`w-full aspect-[3/4.2] focus:outline-none rounded-2xl overflow-hidden shadow-md relative group bg-white ${isPlayed ? 'opacity-100' : ''} ${isLockedByOther ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  className={`w-full aspect-[3/4.2] focus:outline-none rounded-2xl overflow-hidden shadow-md relative group bg-white ${isPlayed ? 'opacity-100' : ''} ${isLockedByOther ? 'opacity-50 cursor-not-allowed' : ''} ${isLockedByMe ? 'ring-4 ring-yellow-400 ring-inset' : ''}`}
                 >
                   {/* If played, show result */}
                   {isPlayed ? (
@@ -918,7 +1056,23 @@ const App: React.FC = () => { // --- State ---
                       <span className="text-gray-500 font-bold mt-2 text-xs">刮獎中...</span>
                     </div>
                   ) : (
-                    <img src={coverImage} alt="Cover" className="w-full h-full object-cover" />
+                    <motion.div className="w-full h-full relative">
+                      <img src={coverImage} alt="Cover" className="w-full h-full object-cover" />
+                      {/* Phase 3: opacity fades as progress increases (other players' view) */}
+                      {(card.status === 'scratching' || isLockedByMe) && (card.progress ?? 0) > 0 && (
+                        <motion.div
+                          className="absolute inset-0 bg-white"
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: Math.min(0.8, (card.progress ?? 0) / 100) }}
+                          transition={{ duration: 0.5 }}
+                        />
+                      )}
+                      {isLockedByMe && (
+                        <div className="absolute inset-x-0 bottom-0 bg-yellow-400 text-yellow-900 text-[10px] font-black py-1 text-center">
+                          您正在刮這張
+                        </div>
+                      )}
+                    </motion.div>
                   )}
 
                   <div className="absolute top-2 right-2 bg-white/90 backdrop-blur text-gray-800 text-xs font-bold px-2 py-1 rounded-md shadow-sm z-10">
@@ -942,10 +1096,22 @@ const App: React.FC = () => { // --- State ---
           onUploadCover={handleUploadCover}
           currentCover={coverImage}
           onShareSnapshot={handleShareCloudLink}
+          onResetLocks={handleResetLocks}
+          onResetProgress={handleResetProgress}
         />
       </div>
     );
   }
+
+  // --- Phase 3: Progress update handler ---
+  const handleProgressUpdate = async (percentage: number) => {
+    if (!selectedCard) return;
+    try {
+      await GameService.updateCardProgress(selectedCard.id, percentage);
+    } catch (err) {
+      console.error('Failed to update progress:', err);
+    }
+  };
 
   // Game Screen
   return (
@@ -956,6 +1122,8 @@ const App: React.FC = () => { // --- State ---
       loseMessage={config.loseMessage}
       onBack={() => setSelectedCardId(null)}
       onComplete={() => handleCardComplete(selectedCard.id)}
+      onProgressUpdate={handleProgressUpdate}
+      revealThreshold={REVEAL_THRESHOLD}
     />
   );
 };

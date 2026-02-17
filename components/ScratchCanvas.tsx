@@ -4,12 +4,14 @@ import { triggerHaptic } from '../utils';
 interface ScratchCanvasProps {
   width: number;
   height: number;
-  imageSrc: string; // New prop for cover image
+  imageSrc: string;
   onScratchStart: () => void;
   onScratchEnd: () => void;
   onRevealComplete: () => void;
+  onProgressUpdate?: (percentage: number) => void; // Phase 3: real-time progress
   isRevealed: boolean;
   brushSize?: number;
+  revealThreshold?: number; // % threshold to auto-reveal
 }
 
 const ScratchCanvas: React.FC<ScratchCanvasProps> = ({
@@ -19,14 +21,60 @@ const ScratchCanvas: React.FC<ScratchCanvasProps> = ({
   onScratchStart,
   onScratchEnd,
   onRevealComplete,
+  onProgressUpdate,
   isRevealed,
   brushSize = 25,
+  revealThreshold = 95,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
   const lastPoint = useRef<{ x: number; y: number } | null>(null);
-  const animationFrameId = useRef<number>();
+  const animationFrameId = useRef<number | undefined>(undefined);
+
+  // Debounce progress reporting: max once every 2s OR when progress jumps ≥10%
+  const lastReportedProgress = useRef(0);
+  const lastReportTime = useRef(0);
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  const reportProgress = useCallback((percentage: number) => {
+    if (!onProgressUpdate) return;
+
+    const now = Date.now();
+    const delta = percentage - lastReportedProgress.current;
+    const timeSinceLastReport = now - lastReportTime.current;
+
+    // Report immediately if ≥10% jump
+    if (delta >= 10) {
+      lastReportedProgress.current = percentage;
+      lastReportTime.current = now;
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+      onProgressUpdate(percentage);
+      return;
+    }
+
+    // Otherwise debounce to max once per 2s
+    if (timeSinceLastReport >= 2000) {
+      lastReportedProgress.current = percentage;
+      lastReportTime.current = now;
+      onProgressUpdate(percentage);
+    } else {
+      // Schedule a deferred report
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+      debounceTimer.current = setTimeout(() => {
+        lastReportedProgress.current = percentage;
+        lastReportTime.current = Date.now();
+        onProgressUpdate(percentage);
+      }, 2000 - timeSinceLastReport);
+    }
+  }, [onProgressUpdate]);
+
+  // Cleanup debounce timer
+  useEffect(() => {
+    return () => {
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    };
+  }, []);
 
   const initCanvas = useCallback(() => {
     const canvas = canvasRef.current;
@@ -41,24 +89,18 @@ const ScratchCanvas: React.FC<ScratchCanvasProps> = ({
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
 
-    // Load Image
     const img = new Image();
     img.src = imageSrc;
     img.crossOrigin = "Anonymous";
 
     img.onload = () => {
-      // Draw the image to fill the canvas
-      // We use 'cover' logic to maintain aspect ratio if needed, or fill
       ctx.globalCompositeOperation = 'source-over';
       ctx.drawImage(img, 0, 0, width, height);
       setIsLoaded(true);
-
-      // Setup for scratching
       ctx.globalCompositeOperation = 'destination-out';
     };
 
     img.onerror = () => {
-      // Fallback if image fails
       ctx.fillStyle = '#C0C0C0';
       ctx.fillRect(0, 0, width, height);
       ctx.font = '20px sans-serif';
@@ -67,7 +109,6 @@ const ScratchCanvas: React.FC<ScratchCanvasProps> = ({
       setIsLoaded(true);
       ctx.globalCompositeOperation = 'destination-out';
     };
-
   }, [width, height, imageSrc]);
 
   useEffect(() => {
@@ -94,7 +135,6 @@ const ScratchCanvas: React.FC<ScratchCanvasProps> = ({
     const w = canvas.width;
     const h = canvas.height;
 
-    // Check every 15th pixel to be lighter on CPU
     const imageData = ctx.getImageData(0, 0, w, h);
     const data = imageData.data;
     let clearPixels = 0;
@@ -109,11 +149,14 @@ const ScratchCanvas: React.FC<ScratchCanvasProps> = ({
 
     const percentage = (clearPixels / totalPixelsChecked) * 100;
 
-    // Changed threshold to 1% for testing
-    if (percentage > 1 && !isRevealed) {
+    // Report progress (debounced)
+    reportProgress(percentage);
+
+    // Auto-reveal at threshold
+    if (percentage >= revealThreshold && !isRevealed) {
       onRevealComplete();
     }
-  }, [isRevealed, onRevealComplete]);
+  }, [isRevealed, onRevealComplete, reportProgress, revealThreshold]);
 
   const scratch = useCallback((x: number, y: number) => {
     if (!isLoaded) return;
