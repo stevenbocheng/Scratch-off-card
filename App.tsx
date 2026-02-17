@@ -741,7 +741,9 @@ const App: React.FC = () => {
 
     // 2. Anti-cheat: if user already has A DIFFERENT scratching card, force back to it
     const myActiveCard = mergedDeck.find(c => c.status === 'scratching' && c.lockedBy === userId);
-    if (myActiveCard) {
+    // Relaxed check: if the card is NOT yet finished (< 90%), then we force them back.
+    // If it is >= 90%, we let the call go to server, which will auto-complete it and lock the new one.
+    if (myActiveCard && (myActiveCard.progress ?? 0) < 90) {
       setSelectedCardId(myActiveCard.id);
       return;
     }
@@ -1119,12 +1121,30 @@ const App: React.FC = () => {
   }
 
   // --- Phase 3: Progress update handler ---
+  // --- Phase 3: Progress update handler (Throttled to max 1 update per 1.5s) ---
+  const lastProgressRef = useRef<{ [id: number]: number }>({});
+  const lastUpdateRef = useRef<{ [id: number]: number }>({});
+
   const handleProgressUpdate = async (percentage: number) => {
     if (!selectedCard) return;
+
+    const now = Date.now();
+    const lastTime = lastUpdateRef.current[selectedCard.id] || 0;
+    const lastVal = lastProgressRef.current[selectedCard.id] || 0;
+
+    // Only skip if it's too frequent AND the change is small (<5%)
+    // But always send if it's been more than 1.5s
+    if (now - lastTime < 1500 && Math.abs(percentage - lastVal) < 5) {
+      return;
+    }
+
+    lastUpdateRef.current[selectedCard.id] = now;
+    lastProgressRef.current[selectedCard.id] = percentage;
+
     try {
       await GameService.updateCardProgress(selectedCard.id, percentage);
     } catch (err) {
-      console.error('Failed to update progress:', err);
+      console.error('Failed to update progress (likely concurrent edit):', err);
     }
   };
 

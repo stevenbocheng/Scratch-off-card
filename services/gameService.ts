@@ -95,28 +95,46 @@ export const GameService = {
                 const data = gameDoc.data() as GameState;
                 const deck = data.deck;
 
+                const newDeck = [...deck];
+
                 // Anti-cheat: check if user already has a scratching card
-                const existing = deck.find(c => c.status === 'scratching' && c.lockedBy === userId);
-                if (existing) {
-                    throw "User already has an active card";
+                const existingIdx = newDeck.findIndex(c => c.status === 'scratching' && c.lockedBy === userId);
+                if (existingIdx !== -1) {
+                    const existing = newDeck[existingIdx];
+                    // Logic optimization: if the current card is actually "finished" (>90% or 100%),
+                    // we allow them to pick a new one by auto-completing the old one right here.
+                    if (existing.progress >= 90) {
+                        newDeck[existingIdx] = {
+                            ...existing,
+                            status: 'completed',
+                            isPlayed: true,
+                            isRevealed: true,
+                            progress: 100,
+                            lockedBy: undefined,
+                            lockedAt: undefined
+                        };
+                        // Now proceed to lock the new card
+                    } else {
+                        throw "User already has an active card";
+                    }
                 }
 
-                const cardIndex = deck.findIndex(c => c.id === cardId);
+                const cardIndex = newDeck.findIndex(c => c.id === cardId);
                 if (cardIndex === -1) throw "Card not found";
 
-                const card = deck[cardIndex];
+                const card = newDeck[cardIndex];
 
                 // Only available cards can be locked
                 if (card.status !== 'available') {
                     throw "Card is not available";
                 }
 
-                const newDeck = [...deck];
                 newDeck[cardIndex] = {
                     ...card,
                     status: 'scratching',
                     lockedBy: userId,
-                    lockedAt: Date.now()
+                    lockedAt: Date.now(),
+                    progress: 0 // Reset progress for new scratch
                 };
 
                 transaction.update(gameRef, { deck: newDeck });
