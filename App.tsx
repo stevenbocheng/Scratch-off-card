@@ -1124,30 +1124,11 @@ const App: React.FC = () => {
     );
   }
 
-  // --- Phase 3: Progress update handler ---
-  // --- Phase 3: Progress update handler (Throttled to max 1 update per 1.5s) ---
-
-  const handleProgressUpdate = async (percentage: number) => {
-    if (!selectedCard) return;
-
-    const now = Date.now();
-    const lastTime = lastUpdateRef.current[selectedCard.id] || 0;
-    const lastVal = lastProgressRef.current[selectedCard.id] || 0;
-
-    // Only skip if it's too frequent AND the change is small (<5%)
-    // But always send if it's been more than 1.5s
-    if (now - lastTime < 1500 && Math.abs(percentage - lastVal) < 5) {
-      return;
-    }
-
-    lastUpdateRef.current[selectedCard.id] = now;
-    lastProgressRef.current[selectedCard.id] = percentage;
-
-    try {
-      await GameService.updateCardProgress(selectedCard.id, percentage);
-    } catch (err) {
-      console.error('Failed to update progress (likely concurrent edit):', err);
-    }
+  // --- Phase 3: Progress update handler (Local Only for performance) ---
+  const handleProgressUpdate = (percentage: number) => {
+    // We no longer sync every % to Firestore because it causes massive lag in multiplayer
+    // due to document size and transaction contention.
+    // Progress is now purely local visual feedback for the current player.
   };
 
   // Game Screen
