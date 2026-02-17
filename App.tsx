@@ -605,6 +605,11 @@ const App: React.FC = () => {
   const isViewOnly = !!snapshotId;
   const [isMusicOn, setIsMusicOn] = useState(true);
 
+  // --- Refs (Hook Rule: must be at top) ---
+  const lastProgressRef = useRef<{ [id: number]: number }>({});
+  const lastUpdateRef = useRef<{ [id: number]: number }>({});
+  const hasRecovered = useRef(false);
+
   // --- Local Sync Cache (Solves Ghost Locks & F5 Loops) ---
   const [localDone, setLocalDone] = useState<Set<number>>(new Set());
 
@@ -657,7 +662,6 @@ const App: React.FC = () => {
   }, [cardsLoading, snapshotId, deck.length, cloudConfig, setDeck]);
 
   // --- Phase 2: Anti-F5 auto-recovery ---
-  const hasRecovered = useRef(false);
   useEffect(() => {
     if (authLoading || cardsLoading || !uid || isViewOnly || hasRecovered.current) return;
     // Check if user has an active (scratching) card
@@ -1122,8 +1126,6 @@ const App: React.FC = () => {
 
   // --- Phase 3: Progress update handler ---
   // --- Phase 3: Progress update handler (Throttled to max 1 update per 1.5s) ---
-  const lastProgressRef = useRef<{ [id: number]: number }>({});
-  const lastUpdateRef = useRef<{ [id: number]: number }>({});
 
   const handleProgressUpdate = async (percentage: number) => {
     if (!selectedCard) return;
