@@ -876,12 +876,30 @@ const App: React.FC = () => {
   // Find the selected card object
   const selectedCard = mergedDeck.find(c => c.id === selectedCardId);
 
-  // Stats Calculations
-  const totalPrizePool = mergedDeck.reduce((sum, card) => sum + card.totalPrizeAmount, 0);
-  const remainingPrizePool = mergedDeck.filter(c => !c.isPlayed).reduce((sum, card) => sum + card.totalPrizeAmount, 0);
-  const scratchedCount = mergedDeck.filter(c => c.isPlayed).length;
-  const totalWinningCards = mergedDeck.filter(c => c.isWin).length;
-  const winProbability = mergedDeck.length > 0 ? ((totalWinningCards / mergedDeck.length) * 100).toFixed(1) : "0.0";
+  // Stats Calculations (Reactive to BOTH isPlayed flag and status machine)
+  const totalPrizePool = useMemo(() => mergedDeck.reduce((sum, card) => sum + card.totalPrizeAmount, 0), [mergedDeck]);
+
+  const remainingPrizePool = useMemo(() =>
+    mergedDeck
+      .filter(c => !c.isPlayed && c.status !== 'completed')
+      .reduce((sum, card) => sum + card.totalPrizeAmount, 0)
+    , [mergedDeck]);
+
+  const winningCardsRemaining = useMemo(() =>
+    mergedDeck.filter(c => c.isWin && !c.isPlayed && c.status !== 'completed').length
+    , [mergedDeck]);
+
+  const totalWinningCards = useMemo(() => mergedDeck.filter(c => c.isWin).length, [mergedDeck]);
+
+  const cumulativePrize = useMemo(() =>
+    mergedDeck
+      .filter(c => c.isPlayed || c.status === 'completed')
+      .reduce((sum, card) => sum + card.totalPrizeAmount, 0)
+    , [mergedDeck]);
+
+  const winProbability = useMemo(() =>
+    mergedDeck.length > 0 ? ((totalWinningCards / mergedDeck.length) * 100).toFixed(1) : "0.0"
+    , [mergedDeck, totalWinningCards]);
 
   // Global Loading Protector
   if (authLoading || (cardsLoading && mergedDeck.length === 0)) {
@@ -976,10 +994,7 @@ const App: React.FC = () => {
                 <span className="text-xs text-gray-400 font-bold uppercase">累積獎金</span>
               </div>
               <span className="text-xl font-black text-green-500">
-                ${Array.from(playedIds).reduce((sum, id) => {
-                  const card = deck.find(c => c.id === id);
-                  return sum + (card?.totalPrizeAmount || 0);
-                }, 0).toLocaleString()}
+                ${cumulativePrize.toLocaleString()}
               </span>
             </div>
           </div>
