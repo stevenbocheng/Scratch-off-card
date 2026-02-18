@@ -44,29 +44,22 @@ export function useCards(snapshotId?: string | null) {
         }
 
         // Live mode: subscribe to default game
-        console.log('useCards: Initializing LIVE subscription...');
         const unsub = GameService.subscribeToGame((data: GameState | null) => {
             if (data && data.config && Array.isArray(data.deck)) {
-                const now = Date.now();
                 const migratedDeck = data.deck.map(migrateCard);
-
-                // Debug log to see if data is actually arriving
-                const completedCount = migratedDeck.filter(c => c.status === 'completed').length;
-                console.log(`[Sync] Received snapshot. Completed: ${completedCount}/${migratedDeck.length}`);
-
-                setConfig(data.config);
                 setCards(migratedDeck);
+                setConfig(data.config);
 
-                // --- Crowdsourced Cleanup ---
+                // --- Crowdsourced Cleanup (Keep quiet, only run if needed) ---
+                const now = Date.now();
                 const staleIds = migratedDeck
                     .filter(c => c.status === 'scratching' && (!c.lockedAt || (now - c.lockedAt) > 45000))
                     .map(c => c.id);
 
                 if (staleIds.length > 0) {
-                    GameService.forceCompleteStaleCards(staleIds).catch(console.error);
+                    GameService.forceCompleteStaleCards(staleIds).catch(() => { }); // Silent fail
                 }
             } else {
-                console.warn('useCards: Received empty or invalid data from Firestore.');
                 setCards([]);
                 setConfig(null);
             }
