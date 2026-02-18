@@ -39,7 +39,7 @@ const DEFAULT_CONFIG: GameConfig = {
 };
 
 // Hard-coded BGM path — file lives in public/bgm.mp3
-const DEFAULT_BGM = `${import.meta.env.BASE_URL}bgm.mp3`;
+const DEFAULT_BGM = `${(import.meta as any).env.BASE_URL}bgm.mp3`;
 
 // --- Default SVG Cover (Fallback) ---
 const DEFAULT_COVER = `data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='600' viewBox='0 0 400 600'%3E%3Cdefs%3E%3ClinearGradient id='bg' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%23FCD34D'/%3E%3Cstop offset='100%25' stop-color='%23F59E0B'/%3E%3C/linearGradient%3E%3Cpattern id='pattern' width='40' height='40' patternUnits='userSpaceOnUse'%3E%3Ccircle cx='20' cy='20' r='2' fill='%23FFFFFF' opacity='0.3'/%3E%3C/pattern%3E%3C/defs%3E%3Crect width='100%25' height='100%25' fill='url(%23bg)'/%3E%3Crect width='100%25' height='100%25' fill='url(%23pattern)'/%3E%3Ccircle cx='200' cy='220' r='100' fill='%23FFFBEB' stroke='%23FBBF24' stroke-width='8'/%3E%3Cpath d='M160 180 Q200 220 240 180 Q260 140 220 120 Q200 140 180 120 Q140 140 160 180' fill='%23F59E0B'/%3E%3Ctext x='200' y='400' font-family='sans-serif' font-weight='900' font-size='48' fill='%2378350F' text-anchor='middle' stroke='%23FFF' stroke-width='2'%3ELUCKY%3C/text%3E%3Ctext x='200' y='450' font-family='sans-serif' font-weight='900' font-size='48' fill='%2378350F' text-anchor='middle' stroke='%23FFF' stroke-width='2'%3EPAWS%3C/text%3E%3Crect x='50' y='500' width='300' height='60' rx='30' fill='%23FFFFFF' stroke='%2378350F' stroke-width='4'/%3E%3Ctext x='200' y='542' font-family='sans-serif' font-weight='bold' font-size='24' fill='%23D97706' text-anchor='middle'%3ESCRATCH TO WIN%3C/text%3E%3C/svg%3E`;
@@ -604,11 +604,14 @@ const App: React.FC = () => {
   const [shareUrl, setShareUrl] = useState("");
   const isViewOnly = !!snapshotId;
   const [isMusicOn, setIsMusicOn] = useState(true);
+  const [showUpdateNotice, setShowUpdateNotice] = useState(false);
+  const lastCloudUpdate = useRef<string | null>(null);
 
   // --- Refs (Hook Rule: must be at top) ---
   const lastProgressRef = useRef<{ [id: number]: number }>({});
   const lastUpdateRef = useRef<{ [id: number]: number }>({});
   const hasRecovered = useRef(false);
+  const localLastResetRef = useRef<number>(Number(localStorage.getItem('local_last_reset') || 0));
 
   // --- Local Sync Cache (Solves Ghost Locks & F5 Loops) ---
   const [localDone, setLocalDone] = useState<Set<number>>(new Set());
@@ -649,8 +652,31 @@ const App: React.FC = () => {
   // Sync cloud config to local config state
   useEffect(() => {
     if (cloudConfig) {
-      setConfig(cloudConfig);
+      // Sync messages and images
+      setWinMessage(cloudConfig.winMessage || "");
+      setLoseMessage(cloudConfig.loseMessage || "");
       if (cloudConfig.coverImage) setCoverImage(cloudConfig.coverImage);
+
+      // Sync music state
+      setIsMusicOn(cloudConfig.bgMusicEnabled ?? true);
+
+      // Version/Reset detection: If config was reset, show notice and clear cache
+      const cloudVersion = cloudConfig.lastResetAt || 0;
+
+      if (lastCloudUpdate.current && cloudVersion && lastCloudUpdate.current !== String(cloudVersion)) {
+        setShowUpdateNotice(true);
+      }
+      lastCloudUpdate.current = String(cloudVersion);
+
+      // --- Cache Sync Logic ---
+      if (cloudVersion > localLastResetRef.current) {
+        console.log('Detected cloud reset, clearing local cache...');
+        clearLocalDone();
+        localLastResetRef.current = cloudVersion;
+        localStorage.setItem('local_last_reset', String(cloudVersion));
+      }
+
+      setConfig(cloudConfig);
     }
   }, [cloudConfig]);
 
@@ -783,11 +809,27 @@ const App: React.FC = () => {
 
     setIsSyncing(true);
     try {
-      // IMPORTANT: Use the raw 'deck' state for saving. 
-      // This ensures that if we just regenerated, we save the CLEAN cards.
-      // If we are just updating config, 'deck' already contains the synced server statuses.
-      await GameService.saveGameToCloud(cleanConfig, deck);
-      alert("發布成功！所有玩家現在將看到最新的設定與牌組。");
+      // 1. Reset all cards to 'available' for the new publish
+      const resetDeck = deck.map(c => ({
+        ...c,
+        status: 'available' as const,
+        isPlayed: false,
+        isRevealed: false,
+        progress: 0,
+        lockedBy: undefined,
+        lockedAt: undefined
+      }));
+
+      // 2. IMPORTANT: Update lastResetAt so players clear their local cache
+      const updatedConfig = {
+        ...cleanConfig,
+        lastResetAt: Date.now()
+      };
+
+      await GameService.saveGameToCloud(updatedConfig, resetDeck);
+      setDeck(resetDeck); // Update local state
+
+      alert("發布成功！所有玩家現在將看到最新設定，進度已全數重置。");
       setShareUrl(window.location.origin + window.location.pathname);
     } catch (e) {
       console.error(e);
@@ -868,7 +910,11 @@ const App: React.FC = () => {
 
     setIsSyncing(true);
     try {
-      await GameService.saveGameToCloud(config, cleanDeck);
+      const updatedConfig = {
+        ...config,
+        lastResetAt: Date.now()
+      };
+      await GameService.saveGameToCloud(updatedConfig, cleanDeck);
       setDeck(cleanDeck);
       alert("全域進度已重置！現在大家可以重新刮了。");
     } catch (err) {
@@ -931,16 +977,16 @@ const App: React.FC = () => {
     return (
       <div className="min-h-screen bg-[#FFF8F0] p-4 font-sans">
         {/* Header */}
-        <header className="p-4 flex justify-between items-center relative z-10">
+        <header className="fixed top-0 left-0 right-0 p-4 flex justify-between items-center z-50 bg-[#FFF8F0]/80 backdrop-blur-md shadow-sm border-b border-orange-100">
           <div className="flex items-center gap-2">
-            <div className="bg-white/20 p-2 rounded-lg backdrop-blur-sm border border-white/30 shadow-inner">
-              <Trophy className="text-yellow-300 drop-shadow-sm" size={24} />
+            <div className="bg-orange-500 p-2 rounded-xl shadow-lg transform -rotate-3">
+              <Trophy className="text-yellow-300 drop-shadow-md" size={24} />
             </div>
             <div>
-              <h1 className="text-2xl font-black text-white italic tracking-tighter drop-shadow-md">
-                <span className="text-yellow-300">LUCKY</span> SCRATCH
+              <h1 className="text-2xl font-black text-gray-800 italic tracking-tighter leading-none">
+                <span className="text-orange-600">LUCKY</span> PAWS
               </h1>
-              <p className="text-[10px] text-white/80 font-bold tracking-widest uppercase -mt-1">
+              <p className="text-[10px] text-gray-400 font-black tracking-widest uppercase mt-0.5">
                 WIN UP TO {Math.max(...config.tiers.map(t => t.amount)).toLocaleString()}
               </p>
             </div>
@@ -950,13 +996,13 @@ const App: React.FC = () => {
             {/* Music Toggle */}
             <button
               onClick={() => setIsMusicOn(!isMusicOn)}
-              className="bg-white/20 p-2 rounded-full hover:bg-white/30 transition border border-white/30 backdrop-blur-md shadow-lg"
+              className="bg-white p-2.5 rounded-full hover:scale-105 active:scale-95 transition-all border-2 border-orange-100 shadow-md flex items-center justify-center"
               title={isMusicOn ? '關閉音樂' : '開啟音樂'}
             >
               {isMusicOn ? (
-                <Volume2 className="text-white" size={20} />
+                <Volume2 className="text-orange-500" size={20} />
               ) : (
-                <VolumeX className="text-white" size={20} />
+                <VolumeX className="text-gray-400" size={20} />
               )}
             </button>
 
@@ -964,9 +1010,9 @@ const App: React.FC = () => {
             {isAdmin && !isViewOnly && (
               <button
                 onClick={() => setShowSettings(true)}
-                className="bg-white/20 p-2 rounded-full hover:bg-white/30 transition border border-white/30 backdrop-blur-md shadow-lg group"
+                className="bg-orange-600 p-2.5 rounded-full hover:scale-105 active:scale-95 transition-all border-2 border-orange-400 shadow-xl group flex items-center justify-center"
               >
-                <Settings className="text-white group-hover:rotate-45 transition-transform duration-500" size={24} />
+                <Settings className="text-white group-hover:rotate-90 transition-transform duration-700" size={24} />
               </button>
             )}
 
@@ -977,6 +1023,33 @@ const App: React.FC = () => {
             )}
           </div>
         </header>
+
+        {/* Update Notice Banner */}
+        <AnimatePresence>
+          {showUpdateNotice && (
+            <motion.div
+              initial={{ y: -50, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: -50, opacity: 0 }}
+              className="fixed top-20 left-1/2 -translate-x-1/2 z-40 w-[90%] max-w-md"
+            >
+              <div className="bg-blue-600 text-white px-4 py-2 rounded-xl shadow-2xl flex items-center justify-between border border-blue-400">
+                <div className="flex items-center gap-2">
+                  <RotateCcw size={16} className="animate-spin-slow" />
+                  <span className="text-sm font-bold">管理員已更新設定，建議重新整理網頁！</span>
+                </div>
+                <button
+                  onClick={() => window.location.reload()}
+                  className="bg-white text-blue-600 px-3 py-1 rounded-lg text-xs font-black uppercase"
+                >
+                  刷新
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <div className="h-24"></div> {/* Spacer for fixed header */}
 
         {/* Status Bar - 2x2 Grid Layout */}
         <div className="max-w-4xl mx-auto mb-6 grid grid-cols-2 gap-3">

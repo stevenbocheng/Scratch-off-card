@@ -14,6 +14,7 @@ export interface GameConfig {
   bgMusicLoopEnd?: number;   // End time in seconds
   bgMusicEnabled: boolean; // Toggle for background music
   coverImage?: string;     // Base64 data URL for custom cover image
+  lastResetAt?: number;    // Timestamp of the last global game reset
 }
 
 export interface GamePair {

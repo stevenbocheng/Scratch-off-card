@@ -30,7 +30,10 @@ export const GameService = {
     async saveGameToCloud(config: GameConfig, deck: GameResult[]) {
         const gameRef = doc(db, COLLECTION_NAME, GAME_ID);
         const data = {
-            config,
+            config: {
+                ...config,
+                lastResetAt: Date.now()
+            },
             deck,
             updatedAt: serverTimestamp()
         };
