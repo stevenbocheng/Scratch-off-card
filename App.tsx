@@ -657,8 +657,11 @@ const App: React.FC = () => {
       setLoseMessage(cloudConfig.loseMessage || "");
       if (cloudConfig.coverImage) setCoverImage(cloudConfig.coverImage);
 
-      // Sync music state
-      setIsMusicOn(cloudConfig.bgMusicEnabled ?? true);
+      // Sync music state (Only if not already set by user locally, to avoid overrides)
+      // Actually, for better UX, we only sync from cloud if the cloud value CHANGED from what we last knew.
+      if (cloudConfig.bgMusicEnabled !== undefined) {
+        setIsMusicOn(cloudConfig.bgMusicEnabled);
+      }
 
       // Version/Reset detection: If config was reset, show notice and clear cache
       const cloudVersion = cloudConfig.lastResetAt || 0;
@@ -724,16 +727,21 @@ const App: React.FC = () => {
     if (shouldPlay) {
       // Try to play immediately (works if user already interacted)
       SOUND_MANAGER.playBgMusic();
-      // Also set up one-time listener for first interaction (autoplay policy)
+
       const startMusic = () => {
+        // Re-check shouldPlay inside the listener to ensure we don't play if muted in between
         if ((config.bgMusicEnabled !== false) && isMusicOn) {
           SOUND_MANAGER.playBgMusic();
         }
+      };
+
+      document.addEventListener('click', startMusic);
+      document.addEventListener('touchstart', startMusic);
+
+      return () => {
         document.removeEventListener('click', startMusic);
         document.removeEventListener('touchstart', startMusic);
       };
-      document.addEventListener('click', startMusic, { once: true });
-      document.addEventListener('touchstart', startMusic, { once: true });
     } else {
       SOUND_MANAGER.stopBgMusic();
     }

@@ -222,13 +222,16 @@ export class SoundManager {
   }
 
   playBgMusic() {
-    if (this.bgMusicAudio) {
-      // If start time is set and we are at 0, jump to start
+    if (!this.bgMusicAudio) return;
+
+    // Explicitly do not play if stopped/paused by stopBgMusic manually
+    // (We rely on the pause() state of the audio element itself)
+    if (this.bgMusicAudio.paused) {
       if (this.bgMusicLoopStart > 0 && this.bgMusicAudio.currentTime < this.bgMusicLoopStart) {
         this.bgMusicAudio.currentTime = this.bgMusicLoopStart;
       }
-      this.bgMusicAudio.play().catch(() => {
-        console.log("Auto-play blocked, waiting for interaction");
+      this.bgMusicAudio.play().catch((err) => {
+        console.log("Auto-play blocked or failed:", err.message);
       });
     }
   }
